@@ -1,5 +1,6 @@
 import com.amazonaws.auth.profile.ProfileCredentialsProvider
 import com.amazonaws.regions.Regions
+import com.amazonaws.services.s3.{AmazonS3, AmazonS3Builder, AmazonS3ClientBuilder}
 import com.amazonaws.services.simpleemail.{
   AmazonSimpleEmailService,
   AmazonSimpleEmailServiceClient,
@@ -7,28 +8,34 @@ import com.amazonaws.services.simpleemail.{
 }
 import com.amazonaws.services.sqs.*
 import com.amazonaws.services.sqs.model.Message
-import com.vxksoftware.aws.{SESClient, SQSClient}
+import com.vxksoftware.aws.{S3Client, SESClient, SQSClient}
 import com.vxksoftware.http.ForwardingApp
+import com.vxksoftware.model.*
+import com.vxksoftware.service.EmailForwardingService
 import com.vxksoftware.util.AppConfig
 import zio.*
 import zio.http.*
 import zio.http.model.Method
+import zio.json.*
+
+import java.io.File
 
 object ServerApp extends ZIOAppDefault:
 
-  val app: HttpApp[SESClient, Throwable] = Http.collectZIO[Request] {
-    case Method.GET -> !! / "send" =>
-      ZIO.succeed(Response.text("Hello World!"))
-
-    case request @ Method.POST -> !! / "send" =>
-      ZIO.serviceWithZIO[SESClient] { client =>
-        client.sendSimpleEmail(
-          from = "admin@vxksoftware.com",
-          to = "test@vxksoftware.com",
-          subject = "Hey",
-          text = "from server!"
-        )
-      } *> ZIO.succeed(Response.text("done"))
+  val app: Http[AppConfig & SESClient & S3Client, Throwable, Request, Response] = Http.collectZIO[Request] {
+    case request @ Method.POST -> !! / "alert" =>
+      for
+        appConfig     <- ZIO.service[AppConfig]
+        s3Client      <- ZIO.service[S3Client]
+        bodyAsString  <- request.body.asString
+        lambdaMessage <- ZIO.fromEither(bodyAsString.fromJson[LambdaMessage]).mapError(new RuntimeException(_))
+        _             <- ZIO.log(lambdaMessage.toString)
+        objectFolder   = appConfig.aws.s3.emailFolder
+        objectName     = lambdaMessage.Records.head.ses.mail.messageId
+        objectPath     = objectFolder + objectName
+        file          <- ZIO.attempt(new File(s"tmp/$objectName"))
+        _             <- s3Client.downloadObject(objectPath, file)
+      yield Response.ok
   }
 
   val awsSESClientLayer: URLayer[ProfileCredentialsProvider, AmazonSimpleEmailService] =
@@ -42,10 +49,10 @@ object ServerApp extends ZIOAppDefault:
       }
     }
 
-  val awsSQSClientLayer: URLayer[ProfileCredentialsProvider, AmazonSQS] =
+  val awsS3ClientLayer: URLayer[ProfileCredentialsProvider, AmazonS3] =
     ZLayer.fromZIO {
       ZIO.serviceWith[ProfileCredentialsProvider] { credentialsProvider =>
-        AmazonSQSClientBuilder
+        AmazonS3ClientBuilder
           .standard()
           .withRegion(Regions.US_WEST_2)
           .withCredentials(credentialsProvider)
@@ -61,15 +68,15 @@ object ServerApp extends ZIOAppDefault:
     }
 
   override def run =
-    (for
-      _ <- Server.serve(app).fork
-      _ <- ForwardingApp.start
-    yield ExitCode.success).provide(
+    (
+      for _ <- Server.serve(app)
+      yield ExitCode.success
+    ).provide(
       Server.default,
       awsSESClientLayer,
-      awsSQSClientLayer,
+      awsS3ClientLayer,
       SESClient.live,
-      SQSClient.live,
       credentialsProviderLayer,
-      AppConfig.live
+      AppConfig.live,
+      S3Client.live
     )

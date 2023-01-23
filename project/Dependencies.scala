@@ -3,7 +3,7 @@ import sbt._
 object Dependencies {
 
   lazy val aws: Set[ModuleID] = {
-    val awsVersion: String = "1.12.385"
+    val awsVersion: String = "1.12.389"
     // bc Java 9+
     val jaxb = "javax.xml.bind" % "jaxb-api" % "2.3.1"
 
@@ -12,6 +12,7 @@ object Dependencies {
       "com.amazonaws" % "aws-java-sdk-core" % awsVersion,
       "com.amazonaws" % "aws-java-sdk-ses"  % awsVersion,
       "com.amazonaws" % "aws-java-sdk-sqs"  % awsVersion,
+      "com.amazonaws" % "aws-java-sdk-s3"   % awsVersion,
       jaxb
     )
   }

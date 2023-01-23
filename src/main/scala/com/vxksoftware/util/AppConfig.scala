@@ -11,11 +11,17 @@ case class AppConfig(
 
 case class AWSConfig(
   profileName: Option[String],
-  sqs: SQSConfig
+  sqs: SQSConfig,
+  s3: S3Config,
 )
 
 case class SQSConfig(
   emailQueueUrl: java.net.URL
+)
+
+case class S3Config(
+  emailBucket: String,
+  emailFolder: String
 )
 
 object AppConfig:
